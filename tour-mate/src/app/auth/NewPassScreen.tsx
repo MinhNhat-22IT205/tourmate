@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -6,18 +6,20 @@ import {
   StyleSheet,
   TouchableOpacity,
   Animated,
+  Alert,
+  ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
+import { resetPassword } from "@/services/auth/userService";
 
 function FloatingInput({ label, value, onChangeText, isPassword }: any) {
   const [isFocused, setIsFocused] = useState(false);
   const [hidePassword, setHidePassword] = useState(true);
 
-  // Khởi tạo giá trị Animated dựa trên việc có text hay không
-  const animatedValue = React.useRef(new Animated.Value(value ? 1 : 0)).current;
+  const animatedValue = useRef(new Animated.Value(value ? 1 : 0)).current;
 
-  React.useEffect(() => {
+  useEffect(() => {
     Animated.timing(animatedValue, {
       toValue: isFocused || value ? 1 : 0,
       duration: 150,
@@ -45,7 +47,6 @@ function FloatingInput({ label, value, onChangeText, isPassword }: any) {
   return (
     <View style={styles.inputWrapper}>
       <Animated.Text style={labelStyle}>{label}</Animated.Text>
-      {/* Sửa từ <div> thành <View> */}
       <View style={styles.inputContainer}>
         <TextInput
           style={styles.input}
@@ -54,6 +55,7 @@ function FloatingInput({ label, value, onChangeText, isPassword }: any) {
           secureTextEntry={isPassword ? hidePassword : false}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
+          autoCapitalize="none"
         />
         {isPassword && (
           <TouchableOpacity onPress={() => setHidePassword(!hidePassword)}>
@@ -71,20 +73,54 @@ function FloatingInput({ label, value, onChangeText, isPassword }: any) {
 
 export default function NewPassScreen() {
   const router = useRouter();
+  const { email } = useLocalSearchParams<{ email: string }>();
+  
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleConfirm = () => {
-    // Luồng: NewPassScreen -> LoginScreen
-    console.log("Mật khẩu mới đã được cập nhật");
-    router.replace("/auth/LoginScreen" as any);
+  const handleConfirm = async () => {
+    if (!password || !confirmPassword) {
+      Alert.alert("Lỗi", "Vui lòng nhập đầy đủ mật khẩu");
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      Alert.alert("Lỗi", "Mật khẩu xác nhận không khớp");
+      return;
+    }
+
+    if (password.length < 6) {
+      Alert.alert("Lỗi", "Mật khẩu phải có ít nhất 6 ký tự");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result = await resetPassword(email!, password);
+      
+      if (result.success) {
+        Alert.alert("Thành công", "Mật khẩu của bạn đã được cập nhật!", [
+          {
+            text: "Đăng nhập",
+            onPress: () => router.replace("/auth/LoginScreen"),
+          },
+        ]);
+      } else {
+        Alert.alert("Thất bại", result.message);
+      }
+    } catch (error) {
+      Alert.alert("Lỗi", "Không thể kết nối đến server");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Đổi mật khẩu</Text>
+      <Text style={styles.title}>Thiết lập mật khẩu mới</Text>
+      <Text style={styles.subTitle}>Vui lòng nhập mật khẩu mới cho tài khoản: {email}</Text>
 
-      {/* Trường Mật khẩu mới */}
       <FloatingInput
         label="Mật khẩu mới"
         value={password}
@@ -92,7 +128,6 @@ export default function NewPassScreen() {
         isPassword
       />
 
-      {/* Trường Xác nhận mật khẩu mới */}
       <FloatingInput
         label="Xác nhận mật khẩu mới"
         value={confirmPassword}
@@ -100,19 +135,26 @@ export default function NewPassScreen() {
         isPassword
       />
 
-      {/* Dòng Trở về bên trái */}
+      <TouchableOpacity 
+        style={[styles.button, loading && { opacity: 0.7 }]} 
+        onPress={handleConfirm}
+        disabled={loading}
+      >
+        {loading ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.buttonText}>Xác nhận thay đổi</Text>
+        )}
+      </TouchableOpacity>
+
       <View style={styles.backContainer}>
         <TouchableOpacity 
-          onPress={() => router.push({ pathname: "/auth/VerifyScreen", params: { from: "forgotpass" } })}
+          onPress={() => router.back()}
+          disabled={loading}
         >
           <Text style={styles.backText}>Trở về</Text>
         </TouchableOpacity>
       </View>
-
-      {/* Nút Xác nhận */}
-      <TouchableOpacity style={styles.button} onPress={handleConfirm}>
-        <Text style={styles.buttonText}>Xác nhận</Text>
-      </TouchableOpacity>
     </View>
   );
 }
@@ -126,7 +168,13 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 24,
-    fontWeight: "600",
+    fontWeight: "bold",
+    marginBottom: 8,
+    textAlign: "left",
+  },
+  subTitle: {
+    fontSize: 14,
+    color: "#666",
     marginBottom: 30,
   },
   inputWrapper: {
@@ -148,8 +196,8 @@ const styles = StyleSheet.create({
   },
   backContainer: {
     flexDirection: "row",
-    justifyContent: "flex-start",
-    marginBottom: 20,
+    justifyContent: "center",
+    marginTop: 20,
   },
   backText: {
     color: "#007BFF",

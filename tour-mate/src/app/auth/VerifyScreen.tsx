@@ -5,32 +5,36 @@ import {
   TextInput,
   StyleSheet,
   TouchableOpacity,
-  Keyboard,
+  Alert,
+  ActivityIndicator,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
+import { verifyOTP, resendOTP } from "@/services/auth/userService"; // Import thêm resendOTP
 
 export default function VerifyScreen() {
   const router = useRouter();
-  const { from } = useLocalSearchParams(); // Lấy thông tin màn hình trước đó
+  const { from, email } = useLocalSearchParams<{
+    from: string;
+    email: string;
+  }>();
+
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
+  const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false); // State riêng cho việc gửi lại mã
   const inputs = useRef<Array<TextInput | null>>([]);
 
   const handleChange = (text: string, index: number) => {
     const newOtp = [...otp];
     newOtp[index] = text;
     setOtp(newOtp);
-
-    // Nếu nhập xong 1 số, tự động nhảy sang ô tiếp theo
     if (text.length !== 0 && index < 5) {
       inputs.current[index + 1]?.focus();
     }
   };
 
   const handleKeyPress = (e: any, index: number) => {
-    // Logic khi bấm nút xóa (Backspace)
     if (e.nativeEvent.key === "Backspace") {
       if (otp[index] === "" && index > 0) {
-        // Nếu ô hiện tại trống, lùi về ô trước và xóa ký tự ô đó
         const newOtp = [...otp];
         newOtp[index - 1] = "";
         setOtp(newOtp);
@@ -39,30 +43,66 @@ export default function VerifyScreen() {
     }
   };
 
-  const handleBack = () => {
-    if (from === "register") {
-      router.push("/auth/RegisterScreen" as any);
-    } else if (from === "forgotpass") {
-      router.push("/auth/ForgotPassScreen" as any);
-    } else {
-      router.back();
+  const handleResend = async () => {
+    if (!email) return;
+
+    setResending(true);
+    try {
+      const result = await resendOTP(email);
+      if (result.success) {
+        Alert.alert("Thông báo", result.message);
+        setOtp(["", "", "", "", "", ""]); // Reset lại các ô nhập
+        inputs.current[0]?.focus();
+      } else {
+        Alert.alert("Lỗi", result.message);
+      }
+    } catch (error) {
+      Alert.alert("Lỗi", "Không thể kết nối server");
+    } finally {
+      setResending(false);
     }
   };
 
-  const handleVerify = () => {
-    // Giả sử mã OTP đúng
-    if (from === "forgotpass") {
-      // Luồng Quên mật khẩu: Tiến đến trang nhập mật khẩu mới
-      router.push("/auth/NewPassScreen" as any);
-    } else if (from === "register") {
-      // Luồng Đăng ký: Xác thực xong thì về Login để đăng nhập
-      router.push("/auth/LoginScreen" as any);
+  const handleVerify = async () => {
+    const otpString = otp.join("");
+    if (otpString.length < 6) {
+      Alert.alert("Lỗi", "Vui lòng nhập đầy đủ mã OTP 6 số");
+      return;
+    }
+  
+    setLoading(true);
+    try {
+      const purpose = from === "forgotpass" ? "reset_password" : "verify_account";
+      
+      const result = await verifyOTP(email!, otpString, purpose);
+      
+      if (result.success) {
+        Alert.alert("Thành công", result.message, [
+          {
+            text: "OK",
+            onPress: () => {
+              if (from === "forgotpass") {
+                router.push({ pathname: "/auth/NewPassScreen", params: { email } });
+              } else {
+                router.push("/auth/LoginScreen");
+              }
+            },
+          },
+        ]);
+      } else {
+        Alert.alert("Thất bại", result.message);
+      }
+    } catch (error) {
+      Alert.alert("Lỗi", "Kết nối thất bại");
+    } finally {
+      setLoading(false);
     }
   };
-  
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Xác thực</Text>
+      <Text style={styles.subTitle}>Mã xác thực đã được gửi đến: {email}</Text>
 
       <View style={styles.otpContainer}>
         {otp.map((digit, index) => (
@@ -75,25 +115,37 @@ export default function VerifyScreen() {
             onKeyPress={(e) => handleKeyPress(e, index)}
             value={digit}
             ref={(el) => {
-                inputs.current[index] = el;
-              }}
+              inputs.current[index] = el;
+            }}
           />
         ))}
       </View>
 
       <View style={styles.linkRow}>
-        <TouchableOpacity onPress={handleBack}>
+        <TouchableOpacity onPress={() => router.back()}>
           <Text style={styles.linkTextBlue}>Trở về</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity onPress={() => console.log("Gửi lại mã")}>
-          <Text style={styles.linkTextBlue}>Gửi lại</Text>
+        <TouchableOpacity onPress={handleResend} disabled={resending}>
+          {resending ? (
+            <ActivityIndicator size="small" color="#007BFF" />
+          ) : (
+            <Text style={styles.linkTextBlue}>Gửi lại</Text>
+          )}
         </TouchableOpacity>
       </View>
 
-      <TouchableOpacity style={styles.button} onPress={handleVerify}>
-        <Text style={styles.buttonText}>Xác nhận</Text>
-    </TouchableOpacity>
+      <TouchableOpacity
+        style={[styles.button, loading && { opacity: 0.7 }]}
+        onPress={handleVerify}
+        disabled={loading}
+      >
+        {loading ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.buttonText}>Xác nhận</Text>
+        )}
+      </TouchableOpacity>
     </View>
   );
 }
@@ -108,6 +160,12 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 24,
     fontWeight: "600",
+    marginBottom: 10,
+    textAlign: "center",
+  },
+  subTitle: {
+    fontSize: 14,
+    color: "#666",
     marginBottom: 30,
     textAlign: "center",
   },
@@ -125,7 +183,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
     fontSize: 20,
     fontWeight: "bold",
-    color: "#000",
   },
   linkRow: {
     flexDirection: "row",
@@ -133,10 +190,7 @@ const styles = StyleSheet.create({
     marginBottom: 30,
     paddingHorizontal: 5,
   },
-  linkTextBlue: {
-    color: "#007BFF",
-    fontWeight: "500",
-  },
+  linkTextBlue: { color: "#007BFF", fontWeight: "500" },
   button: {
     backgroundColor: "#007BFF",
     height: 56,
@@ -144,9 +198,5 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  buttonText: {
-    color: "#fff",
-    fontWeight: "bold",
-    fontSize: 16,
-  },
+  buttonText: { color: "#fff", fontWeight: "bold", fontSize: 16 },
 });
